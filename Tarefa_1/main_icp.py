@@ -94,8 +94,8 @@ def main():
     # =========================================================
     # 4) ICP (Open3D) — Point-to-Plane, T_init = Semelhante à Identidade
     # =========================================================
-    threshold = 0.05  # em metros
-    # Transformação rígida sem rotação, com ligeira translação (x=-0.20m, y=0.05m, z=0.05m)
+    threshold = 0.02  # em metros
+    # Transformação rígida com rotação de -10 graus em y e -5 graus em z, com ligeira translação (x=0.80m, y=-0.05m, z=-0.05m)
     T_init = np.asarray([
         [ 0.9848,  0.0872,  -0.1736,   0.80],
         [ 0.0,     1.0,      0.0,     -0.05],
