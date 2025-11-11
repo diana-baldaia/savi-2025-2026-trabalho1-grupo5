@@ -13,7 +13,7 @@ Para tal é necessário:
 2. Criação das nuvens de pontos fonte e alvo usando o Open3D;
    - Criar as imagens rgbd (imagens com cor e profundidade) através do open3d.geometry.RGBDImage.create_from_color_and_depth. Esta função tem como parâmetros (...)
 3. Pré-processamento com duas operações principais às nuvens de pontos, com o objetivo de reduzir a sua complexidade e prepará-las para o alinhamento pelo método ICP;
-   -Foi realizado o downsampling através da função voxel_down_sample, aplicada às nuvens de pontos criadas anteriormente. Esta operação reduz a densidade das nuvens ao agrupar pontos próximos dentro de um voxel (cubo) de tamanho definido, neste caso de 1 cm. Assim, diminui-se o número total de pontos, o que acelera o processamento e reduz o ruído sem comprometer significativamente o detalhe da estrutura.
+   - Foi realizado o downsampling através da função voxel_down_sample, aplicada às nuvens de pontos criadas anteriormente. Esta operação reduz a densidade das nuvens ao agrupar pontos próximos dentro de um voxel (cubo) de tamanho definido, neste caso de 1 cm. Assim, diminui-se o número total de pontos, o que acelera o processamento e reduz o ruído sem comprometer significativamente o detalhe da estrutura.
    - Em seguida, foram estimadas as normais através da função estimate_normals, que define uma superfície local e a respetiva normal (vetor perpendicular à superfície) para cada ponto da nuvem. Este cálculo é feito com base nos vizinhos mais próximos, sendo considerados no máximo 30 vizinhos num raio de 5 cm.
 
 - Através da visualização das nuvens de pontos sobrepostas antes de qualquer transformação, estimou-se uma translação de 80 cm no eixo x e -5 cm nos eixos y e z, assim como uma rotação de -10º em torno de y e -5º em torno de z;
