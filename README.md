@@ -1,4 +1,4 @@
-# savi-2025-2026-trabalho1-grupoX
+# savi-2025-2026-trabalho1-grupo5
 
 ## Tarefa 1
 A Tarefa 1 consiste em criar duas nuvens de pontos, uma fonte e uma alvo, cada uma gerada a partir de uma imagem RGB (que contém a informação de cor e coordenadas 2D) e de uma imagem de profundidade (com os valores de distância de cada pixel). O objetivo é alinhar estas duas nuvens de pontos recorrendo ao algoritmo ICP (Iterative Closest Point), através das funções nativas disponibilizadas pelo Open3D. Neste caso, utilizou-se a variante Point-to-Plane, implementada no próprio Open3D, por ser mais eficiente e gerar resultados mais precisos do que o método Point-to-Point em nuvens de pontos mais complexas.
@@ -94,3 +94,40 @@ Passando à função principal custom_icp, dentro desta são implementados todos
        - O parâmetro verbose=0, que desativa a impressão detalhada durante a otimização.
      - Verificação de convergência: Após a otimização, os parâmetros [rx, ry, rz, tx, ty, tz] são convertidos numa matriz de transformação 4×4 através da função get_transformation_matrix (já explicada). Em seguida, verifica-se se a norma do vetor de parâmetros incrementais é inferior à tolerância definida (1e-6 no nosso caso). Se essa condição for satisfeita, o algoritmo considera que convergiu.
      - Atualização da transformação total: No final de cada iteração, a transformação incremental obtida é aplicada à nuvem de pontos fonte (já transformada pela estimativa anterior) e é acumulada na matriz de transformação global. Assim, a matriz inicial é atualizada a cada ciclo, tornando-se progressivamente mais próxima da transformação ideal. Desta forma, o ICP personalizado vai refinando a posição da fonte em direção à posição do alvo, até obter o alinhamento final ótimo.
+
+
+## Tarefa 3
+O objetivo da Tarefa 3 é adicionar uma etapa extra de otimização ao código desenvolvido na Tarefa 2, permitindo avaliar a qualidade da convergência entre as duas nuvens de pontos. Nesta fase, introduz-se a criação de uma esfera englobante mínima, cujo propósito é encontrar a menor esfera possível que contenha todos os pontos das nuvens (fonte e alvo). A esfera é calculada para o conjunto das duas nuvens após a transformação, e também individualmente para a nuvem alvo. A ideia é comparar os raios obtidos quanto mais próximos forem os valores, melhor foi o alinhamento da nuvem de pontos fonte em relação ao alvo, indicando uma convergência mais precisa e estável no processo de ICP personalizado.
+Para isso é então necessário realizar o seguinte:
+
+1. Primeiro, é preciso implementar um código idêntico ao da Tarefa 2, ou seja, carregar as imagens, criar as nuvens de pontos, realizar o pré-processamento e executar o ICP personalizado para obter a nuvem fonte alinhada com a nuvem alvo.
+
+2. De seguida, para criar a esfera englobante, são necessárias três novas funções:
+   - find_minimum_enclosing_sphere(), que será responsável por encontrar os parâmetros (centro e raio) da esfera englobante mínima para um dado conjunto de pontos;
+   - constraint_func(), que define a restrição garantindo que todos os pontos ficam dentro ou sobre a superfície da esfera;
+   - objective_func(), que é a função objetivo utilizada pelo otimizador, devolvendo simplesmente o valor do raio — o parâmetro que pretendemos minimizar.
+Estas duas últimas funções são chamadas dentro de find_minimum_enclosing_sphere() e são fundamentais para que a otimização funcione corretamente.
+Na função objective_func(params), é fornecido o vetor params, composto pelos quatro parâmetros [xc, yc, zc, r], onde os três primeiros representam o centro da esfera e o último corresponde ao raio. O objetivo desta função é apenas devolver o valor do raio, já que é este que será minimizado pelo processo de otimização.
+A função constraint_func(params, points) recebe os mesmos parâmetros descritos anteriormente, bem como o conjunto de pontos pertencentes à nuvem de pontos. Esta função calcula, para cada ponto, a distância euclidiana ao centro da esfera, através da norma ||p_i - c||, sendo 'p_i' o vetor de coordenadas de cada ponto e 'c' o vetor das coordenadas do centro. No final, devolve a diferença entre o raio da esfera e a distância ao centro de cada ponto. Esta diferença deve ser maior ou igual a zero, garantindo que todos os pontos se encontram dentro ou na superfície da esfera.
+
+3. Agora passando à função principal find_minimum_enclosing_sphere(points), à qual devemos fornecer a nuvem de pontos. Esta função é responsável por encontrar os parâmetros ideais da esfera englobante mínima e é implementada da seguinte forma:
+   - Primeiro, é feita uma estimativa inicial dos parâmetros da esfera. Calculamos o centróide da nuvem de pontos através da média das coordenadas de todos os pontos ([média_x, média_y, média_z]). Em seguida, calculamos a distância entre cada ponto e o centróide e obtemos o valor máximo, esse será o raio inicial (utilizando np.max(np.linalg.norm(...))). Estes valores servirão como parâmetros iniciais da otimização.
+   - De seguida, definimos limites (bounds) para os parâmetros a otimizar. O centro da esfera não possui restrições, mas o raio deve ser sempre positivo, por isso definimos o limite inferior como 1e-6 em vez de 0. Isto evita possíveis erros numéricos e garante que o raio nunca é nulo.
+   - Depois, definimos as restrições através da variável: constraints = [{'type': 'ineq', 'fun': constraint_func, 'args': (points,)}]. Aqui, utilizamos a função constraint_func(params, points) (já explicada anteriormente), que calcula a diferença para cada ponto da nuvem. O parâmetro 'type': 'ineq' indica que essa diferença deve ser maior ou igual a zero, garantindo que todos os pontos ficam dentro ou na superfície da esfera.
+   - Segue-se a etapa de otimização, onde minimizamos o tamanho da esfera. Utilizamos a função minimize (em vez de least_squares, pois esta é mais adequada para múltiplas restrições). Passamos como argumentos: a função objective_func, os parâmetros iniciais, o método SLSQP (Sequential Least Squares Programming) ,apropriado para problemas com restrições, os limites, as restrições e o número máximo de iterações. Esta função ajusta iterativamente os parâmetros da esfera [xc, yc, zc, r], de modo a minimizar o raio e satisfazer as restrições (ou seja, garantir que todos os pontos estão contidos na esfera). O processo termina quando converge ou quando é atingido o número máximo de iterações. O resultado final é aceite apenas se for viável, ou seja, se obedecer às restrições impostas; caso contrário, o resultado retorna success = False. Com esta função, garantimos uma esfera otimizada que engloba todos os pontos da nuvem fornecida.
+   - Assim, concluímos a função find_minimum_enclosing_sphere(points), obtendo como resultado os parâmetros otimizados (centro e raio) da esfera que engloba a totalidade dos pontos.
+
+4. Com as três funções criadas (objective_func, constraint_func e find_minimum_enclosing_sphere), já é possível determinar os parâmetros de uma esfera otimizada. No nosso caso, pretende-se gerar duas esferas:
+   - Uma para a nuvem de pontos alvo;
+   - Outra para o conjunto formado pelas duas nuvens (alvo e fonte) após a transformação. Para isso, foi utilizada a função np.vstack() para juntar as duas nuvens de pontos num único array.
+
+5. Por fim, com os parâmetros obtidos (centro e raio) para as esferas das duas nuvens, criamos a visualização final. Esta inclui as nuvens de pontos e as respetivas esferas, permitindo observar visualmente o quão próximas estão, quanto mais semelhantes forem os raios, melhor foi a convergência obtida no processo de ICP.
+
+## Conclusão
+Para concluir, observando a visualização final da Tarefa 2, verificamos que foi alcançada uma boa convergência da nuvem de pontos fonte para a nuvem alvo, uma vez que é possível observar uma sobreposição bastante coerente entre ambas. Contudo, ao analisarmos os resultados através do método da esfera englobante mínima, obtivemos um raio de aproximadamente 1.72 para o conjunto das duas nuvens (alvo + fonte) inicial e cerca de 1.90 para o conjunto após otimização, o que corresponde a um aumento de cerca de 10%. Isto indica que, apesar da boa sobreposição visual, o método da esfera, utilizado isoladamente, não é adequado como métrica principal de convergência. Por exemplo, se criássemos uma nova nuvem fonte que fosse apenas uma rotação da nuvem alvo em torno de um eixo central, sem qualquer alinhamento entre as duas, o método da esfera provavelmente devolveria um raio muito semelhante para ambas, mesmo que, visualmente, as nuvens estivessem completamente desalinhadas. Ou seja, este método só é útil depois de realizado o ICP, funcionando como uma avaliação complementar para verificar se a convergência obtida é suficientemente boa ou se ainda existe margem para melhoria.
+
+Finalmente, é de notar que, em todas as três tarefas, poderiam ter sido obtidos resultados ainda melhores com alguns ajustes, como:
+- aumentar o número de iterações do ICP;
+- reduzir o valor do voxel no pré-processamento (voxel_down_sample(0.01)) para preservar uma maior densidade de pontos;
+- afinar parâmetros como o threshold, raio de procura das normais, limites do otimizador, entre outros.
+Ainda assim, os resultados obtidos demonstram um bom desempenho geral, tanto no alinhamento como na análise complementar da convergência.
