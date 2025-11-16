@@ -3,6 +3,10 @@ import numpy as np
 import open3d as o3d
 from copy import deepcopy
 
+'''
+# Parâmetros de visualização (posição/orientação da câmara)
+'''
+
 view = {
 	"class_name" : "ViewTrajectory",
 	"interval" : 29,
@@ -26,9 +30,13 @@ view = {
 
 def main():
 
-    # =========================================================
-    # 1) CARREGAMENTO (OpenCV) + FILTRAGEM DE PROFUNDIDADE
-    # =========================================================
+    '''
+    1) CARREGAMENTO (OpenCV) + FILTRAGEM DE PROFUNDIDADE
+    Lemos RGB e Depth , filtramos a Depth com o medianBlur (para reduzir o ruido), 
+    convertemos a profundidade de milimetros para metros (TUM: /5000) e removemos valores que 
+    tivessem a uma distância inferior a 0,1m e superior a 3 m
+    '''
+ 
     # Imagem 1 (RGB, Depth)
     rgb1_cv  = cv2.cvtColor(cv2.imread("tum_dataset/rgb/1.png", cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
     depth1   = cv2.imread("tum_dataset/depth/1.png", cv2.IMREAD_UNCHANGED)  # Não alterar o número de bits (PNG de 16 bits)
@@ -44,13 +52,19 @@ def main():
     depth2_m[(depth2_m < 0.1) | (depth2_m > 3.0)] = 0.0
 
 
-    # =========================================================
-    # 2) CRIAÇÃO DE NUVENS (Open3D a partir de dados OpenCV)
-    # =========================================================
+    '''
+    2) CRIAÇÃO DE NUVENS (Open3D a partir de dados OpenCV)
+    Criamos objetos de imagem OPEN3D a partir da imagem RGB carregada com OpenCV, e combianos 
+    as duas imagens(RGB +Depth) para criar um único objeto RGBD que contém a cor de cada pixel e a distância correspondente.
+    De seguida guradamos os parâmetros intrinsecos de uma câmera no modelo pinnhole (usamos valores default)
+    No final desta etapa criamos a nuvem de pontos, através dos objetos RGBD e dos parâmetros da camera. Agora cada pixel RGBD 
+    é um ponto 3D com cor e coordenadas espaciais.
+    '''
+
     color1_o3d = o3d.geometry.Image(rgb1_cv)
     depth1_o3d = o3d.geometry.Image(depth1_m)
     rgbd1 = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        color1_o3d, depth1_o3d, depth_scale=1.0, depth_trunc=5.0, convert_rgb_to_intensity=False
+        color1_o3d, depth1_o3d, depth_scale=1.0, depth_trunc=5.0, convert_rgb_to_intensity=False  #Criação do objeto RGBD que contém a cor de cada pixel e a distância correspondente
     )
 
     color2_o3d = o3d.geometry.Image(rgb2_cv)
@@ -59,23 +73,29 @@ def main():
         color2_o3d, depth2_o3d, depth_scale=1.0, depth_trunc=5.0, convert_rgb_to_intensity=False
     )
 
-    intr = o3d.camera.PinholeCameraIntrinsic(
-        o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault
+    intr = o3d.camera.PinholeCameraIntrinsic( #Guarda os parâmetros intrĩnsecos de uma câmera no modelo pinnhole 
+        o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault #Usa valores default 
     )
-    pcd1 = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd1, intr)
+    pcd1 = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd1, intr) #Criação da nuvem de pontos
     pcd2 = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd2, intr)
 
-
-    # =========================================================
+    '''
     # 3) PRÉ-PROCESSAMENTO
-    # =========================================================
-    pcd1_ds = pcd1.voxel_down_sample(0.01)  # 1 cm
-    pcd1_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))  # Superfície local de 30 pontos máx num raio de 5 cm
+    Aplicamos a função voxel_down_sample às nuvens de pontos, para reduzir o número de pontos existentes 
+    de forma a facilitar o processamento da imagem e reduzir ruido.
+    De seguida usamos o estimate_normals para estimar normais ao plano de cada ponto usando os vizinhos próximos. Será essencial 
+    para usar no ICP, na função point-to-plane
+    Por fimos temos a visualização das imagens3D fonte e alvo antes de qualquer transformação.
+    '''
 
-    pcd2_ds = pcd2.voxel_down_sample(0.005)  # 0.5 cm
+
+    pcd1_ds = pcd1.voxel_down_sample(0.01)  # Reduzir o numero de pontos existentes na nuvem de pontos (agrupa em cubos de 1cm)
+    pcd1_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))  # Estimar normais ao plano do ponto. Usa 30 pontos vizinhos num raio de 0.05 cm, para criar a normal
+
+    pcd2_ds = pcd2.voxel_down_sample(0.01)  # 1 cm
     pcd2_ds.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
 
-    pcd1_ds, _ = pcd1_ds.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
+    pcd1_ds, _ = pcd1_ds.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5) #Remove pontos isolados da nuvem
     pcd2_ds, _ = pcd2_ds.remove_statistical_outlier(nb_neighbors=20, std_ratio=1.5)
 
     # Visualização ANTES (fonte vermelha, alvo azul)
@@ -91,11 +111,23 @@ def main():
     )
 
 
-    # =========================================================
-    # 4) ICP (Open3D) — Point-to-Plane, T_init = Semelhante à Identidade
-    # =========================================================
-    threshold = 0.02  # em metros
-    # Transformação rígida com rotação de -10 graus em y e -5 graus em z, com ligeira translação (x=0.80m, y=-0.05m, z=-0.05m)
+    '''
+    4) ICP 
+    Começamos por definir um limite de correspondência máxima (threshold) e criar uma matriz de transformação inicial (T_init).
+    Quanto melhor for esta transformação inicial, mais rápido e estável será o processo de convergência do ICP.
+    Em seguida, utilizamos a função o3d.pipelines.registration.registration_icp, 
+    responsável por encontrar a transformação rígida (rotação e translação) que minimiza a distância entre pontos correspondentes das duas nuvens.
+    Neste caso foi empregue o método Point-to-Plane, que mede a distância entre cada ponto da nuvem fonte e o plano tangente correspondente na nuvem alvo
+    Caso o resultado de uma iteração apresente um erro (RMSE) menor, esse resultado é armazenado como o melhor alinhamento até ao momento.
+    Este processo é repetido 20 vezes, sendo que, a cada iteração, a matriz de transformação inicial é atualizada com a nova transformação obtida no registration_icp.
+    Dessa forma, o objetivo é iniciar cada ciclo com uma estimativa mais precisa, acelerando a convergência e melhorando a estabilidade do ICP.
+    Por fim, após todas as iterações, aplica-se a melhor transformação encontrada à nuvem de pontos da fonte, 
+    permitindo visualizar o alinhamento final e verificar se a fonte convergiu corretamente para o alvo.
+    '''
+   
+    threshold = 0.02  # Distância máxima de correspondência entre pontos
+    
+    #Matriz de transformação inicial
     T_init = np.asarray([
         [ 0.9848,  0.0872,  -0.1736,   0.80],
         [ 0.0,     1.0,      0.0,     -0.05],
@@ -107,19 +139,20 @@ def main():
 
     for i in range(20):
         
-        res = o3d.pipelines.registration.registration_icp(
-            pcd1_ds, pcd2_ds, threshold, T_init,
+        res = o3d.pipelines.registration.registration_icp( #Resposável por obter a matriz transformação, que melhor aproxima a fonte do alvo
+            pcd1_ds, pcd2_ds, threshold, T_init,           #Foi usado o point to plate, ou seja, minimiza distância ponto→plano usando normais da alvo
             o3d.pipelines.registration.TransformationEstimationPointToPlane(),
             o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=500)
         )
-        print(f"[ICP p2plane][iter {i+1:02d}] th={threshold:.3f}  fitness={res.fitness:.4f}  rmse={res.inlier_rmse:.6f}")
+        print(f"[ICP p2plane][iter {i+1:02d}] th={threshold:.3f}  fitness={res.fitness:.4f}  rmse={res.inlier_rmse:.6f}") #Mostra os resultados da função anterior 
+
         # guardar melhor até agora
-        if (best is None) or (res.inlier_rmse < best[0]):
+        if (best is None) or (res.inlier_rmse < best[0]): #Guarda o resultado se o erro RMSE for menor 
             best = (res.inlier_rmse, res.fitness, threshold, res)
-             # warm start para a próxima iteração
+             
         T_init = res.transformation
 
-    # melhor resultado
+    # print dos dados do melhor resultado
     rmse_best, fit_best, th_best, result = best
     print("\n>>> MELHOR (p2plane): th =", th_best, " fitness =", fit_best, " rmse =", rmse_best)
     print("transformation:\n", result.transformation)
